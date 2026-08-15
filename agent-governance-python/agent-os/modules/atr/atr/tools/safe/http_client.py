@@ -79,7 +79,7 @@ class HttpClientTool:
         rate_limit: int = 60,
         timeout: float = 30.0,
         max_response_size: int = 10_000_000,  # 10MB
-        allow_redirects: bool = True,
+        allow_redirects: bool = False,
         max_redirects: int = 5
     ):
         """
@@ -94,7 +94,9 @@ class HttpClientTool:
             allow_redirects: Whether to follow redirects
             max_redirects: Maximum number of redirects to follow
         """
-        self.allowed_domains: Set[str] = set(allowed_domains or [])
+        self.allowed_domains: Set[str] = {
+            domain.lower().strip(".") for domain in (allowed_domains or [])
+        }
         self.blocked_domains: Set[str] = set(blocked_domains or [
             "localhost",
             "127.0.0.1",
@@ -104,7 +106,9 @@ class HttpClientTool:
         ])
         self.timeout = timeout
         self.max_response_size = max_response_size
-        self.allow_redirects = allow_redirects
+        if allow_redirects:
+            raise ValueError("Automatic redirects are disabled to prevent URL-validation bypasses")
+        self.allow_redirects = False
         self.max_redirects = max_redirects
         self._rate_limiter = RateLimiter(rate_limit)
     
@@ -140,7 +144,10 @@ class HttpClientTool:
         
         # Check allowed domains (if whitelist set)
         if self.allowed_domains:
-            if not any(domain.endswith(allowed) for allowed in self.allowed_domains):
+            if not any(
+                domain == allowed or domain.endswith(f".{allowed}")
+                for allowed in self.allowed_domains
+            ):
                 raise ValueError(
                     f"Domain '{domain}' not in allowed list. "
                     f"Allowed: {', '.join(self.allowed_domains)}"
@@ -176,15 +183,13 @@ class HttpClientTool:
     )
     async def get(
         self,
-        url: str,
-        headers: Optional[Dict[str, str]] = None
+        url: str
     ) -> Dict[str, Any]:
         """
         Make a GET request.
         
         Args:
             url: URL to request (must be in allowed domains)
-            headers: Optional request headers
         
         Returns:
             Dict with status_code, headers, and body
@@ -204,9 +209,7 @@ class HttpClientTool:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(
                 url,
-                headers=headers,
-                allow_redirects=self.allow_redirects,
-                max_redirects=self.max_redirects
+                allow_redirects=False
             ) as response:
                 # Check response size
                 content_length = response.headers.get("Content-Length")
@@ -234,8 +237,7 @@ class HttpClientTool:
         self,
         url: str,
         data: Optional[Dict[str, Any]] = None,
-        json_body: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None
+        json_body: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Make a POST request.
@@ -244,7 +246,6 @@ class HttpClientTool:
             url: URL to request (must be in allowed domains)
             data: Form data to send
             json_body: JSON body to send
-            headers: Optional request headers
         
         Returns:
             Dict with status_code, headers, and body
@@ -266,9 +267,7 @@ class HttpClientTool:
                 url,
                 data=data,
                 json=json_body,
-                headers=headers,
-                allow_redirects=self.allow_redirects,
-                max_redirects=self.max_redirects
+                allow_redirects=False
             ) as response:
                 # Check response size
                 content_length = response.headers.get("Content-Length")
@@ -313,7 +312,7 @@ class HttpClientTool:
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.head(url, allow_redirects=self.allow_redirects) as response:
+            async with session.head(url, allow_redirects=False) as response:
                 return {
                     "status_code": response.status,
                     "headers": dict(response.headers),
